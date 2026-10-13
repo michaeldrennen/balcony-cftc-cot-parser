@@ -10,6 +10,7 @@ use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use MichaelDrennen\Balcony\CftcCotParser\DTO\CotPositionDTO;
 use MichaelDrennen\Balcony\CftcCotParser\Exceptions\BalconyClientException;
+use ZipArchive;
 
 final class Client
 {
@@ -47,15 +48,18 @@ final class Client
             throw BalconyClientException::httpError($status, (string) $response->getBody());
         }
 
-        return $this->parse((string) $response->getBody());
+        $body = (string) $response->getBody();
+
+        return $this->parse(str_starts_with($body, "PK\x03\x04") ? self::unzipFirstEntry($body) : $body);
     }
 
     /**
-     * Parse the CFTC comma-delimited TFF text. Header and malformed lines are skipped,
+     * Parse the CFTC comma-delimited TFF futures-only text (weekly FinFutWk.txt or the
+     * FinFutYY.txt inside a yearly archive). Header and malformed lines are skipped,
      * and only rows whose contract code is tracked are returned.
      *
-     * Column order: name, as-of date (YYMMDD), contract code, open interest,
-     * dealer long/short, asset manager long/short, leveraged funds long/short.
+     * Columns used (0-based): 0 name, 1 as-of date (YYMMDD), 3 contract code, 7 open interest,
+     * 8/9 dealer long/short, 11/12 asset manager long/short, 14/15 leveraged funds long/short.
      *
      * @return CotPositionDTO[]
      */
@@ -72,18 +76,21 @@ final class Client
 
             $cells = array_map('trim', str_getcsv($line));
 
-            if (count($cells) < 10) {
+            if (count($cells) < 16) {
                 continue;
             }
 
-            $code = $cells[2];
+            $code = $cells[3];
 
             if (!in_array($code, $tracked, true)) {
                 continue;
             }
 
             $reportDate = self::parseYymmdd($cells[1]);
-            $numbers = array_map([self::class, 'parseInt'], array_slice($cells, 3, 7));
+            $numbers = array_map(
+                [self::class, 'parseInt'],
+                [$cells[7], $cells[8], $cells[9], $cells[11], $cells[12], $cells[14], $cells[15]],
+            );
 
             if ($reportDate === null || in_array(null, $numbers, true)) {
                 continue;
@@ -104,6 +111,42 @@ final class Client
         }
 
         return $rows;
+    }
+
+    /**
+     * Yearly history files are published as a zip holding a single FinFutYY.txt.
+     */
+    public static function unzipFirstEntry(string $zipBytes): string
+    {
+        if (!class_exists(ZipArchive::class)) {
+            throw BalconyClientException::malformed('The zip extension is required to read CFTC history archives.');
+        }
+
+        $path = tempnam(sys_get_temp_dir(), 'cftc');
+
+        if ($path === false) {
+            throw BalconyClientException::malformed('Could not create a temp file for the CFTC archive.');
+        }
+
+        try {
+            file_put_contents($path, $zipBytes);
+            $zip = new ZipArchive();
+
+            if ($zip->open($path) !== true) {
+                throw BalconyClientException::malformed('CFTC archive is not a readable zip file.');
+            }
+
+            $contents = $zip->getFromIndex(0);
+            $zip->close();
+
+            if ($contents === false) {
+                throw BalconyClientException::malformed('CFTC archive is empty.');
+            }
+
+            return $contents;
+        } finally {
+            @unlink($path);
+        }
     }
 
     public static function parseInt(?string $raw): ?int

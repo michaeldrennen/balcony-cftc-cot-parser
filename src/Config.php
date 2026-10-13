@@ -8,22 +8,26 @@ use InvalidArgumentException;
 
 final class Config
 {
-    public const DEFAULT_URL_TEMPLATE = 'https://www.cftc.gov/dea/newcot/FinFut{YY}.txt';
+    public const CURRENT_WEEK_URL = 'https://www.cftc.gov/dea/newcot/FinFutWk.txt';
+
+    public const HISTORY_URL_TEMPLATE = 'https://www.cftc.gov/files/dea/history/fut_fin_txt_{YYYY}.zip';
 
     /** @var string[] */
     public const DEFAULT_TRACKED_CODES = ['042601', '044601', '043602', '020601', '13874+'];
 
     /**
+     * @param int $year 0 fetches the latest weekly report; a year fetches that year's history archive.
      * @param string[] $trackedCodes
      */
     public function __construct(
         public readonly int $year = 0,
         public readonly array $trackedCodes = self::DEFAULT_TRACKED_CODES,
-        public readonly string $urlTemplate = self::DEFAULT_URL_TEMPLATE,
+        public readonly string $currentWeekUrl = self::CURRENT_WEEK_URL,
+        public readonly string $historyUrlTemplate = self::HISTORY_URL_TEMPLATE,
         public readonly float $timeoutSeconds = 30.0,
     ) {
         if ($year !== 0 && ($year < 2000 || $year > 2099)) {
-            throw new InvalidArgumentException('CFTC year must be between 2000 and 2099 (or 0 for the current year).');
+            throw new InvalidArgumentException('CFTC year must be between 2000 and 2099 (or 0 for the latest week).');
         }
 
         if ($trackedCodes === []) {
@@ -33,8 +37,10 @@ final class Config
 
     public function url(): string
     {
-        $year = $this->year === 0 ? (int) date('Y') : $this->year;
+        if ($this->year === 0) {
+            return $this->currentWeekUrl;
+        }
 
-        return str_replace('{YY}', sprintf('%02d', $year % 100), $this->urlTemplate);
+        return str_replace('{YYYY}', (string) $this->year, $this->historyUrlTemplate);
     }
 }

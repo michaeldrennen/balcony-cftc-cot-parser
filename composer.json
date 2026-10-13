@@ -14,6 +14,7 @@
         "guzzlehttp/guzzle": "^7.8"
     },
     "suggest": {
+        "ext-zip": "Required to read yearly history archives (Config year > 0)",
         "illuminate/database": "Required to use bundled Eloquent models (^10.0|^11.0|^12.0)"
     },
     "require-dev": {
